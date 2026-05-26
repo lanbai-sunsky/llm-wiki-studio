@@ -1,0 +1,41 @@
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data and user content
+data/
+server-*.log
+server-*.out.log
+server-*.err.log
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node / frontend caches
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build and generated archives
+dist/
+build/
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local Claude skill caches
+.claude/**/__pycache__/

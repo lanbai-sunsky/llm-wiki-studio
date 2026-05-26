@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LLM Wiki Studio</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">W</div>
+          <div>
+            <h1>LLM Wiki Studio</h1>
+            <p>面向课程资料的 Agent 学习工作台</p>
+          </div>
+        </div>
+
+        <section class="sidebar-section" data-collapsible>
+          <button class="section-toggle" type="button" aria-expanded="true">
+            <span>创建课程</span>
+            <span class="chevron">⌄</span>
+          </button>
+          <div class="section-body create-box">
+            <label>
+              工作目录
+              <input id="workspace-root" placeholder="例如：D:\05_Obsidian\LLM Wiki Studio" />
+            </label>
+            <small class="field-hint">目录不存在时会自动新建。</small>
+            <button id="save-root-btn" class="ghost-btn" type="button">保存目录</button>
+            <label>
+              新建课程
+              <input id="workspace-name" placeholder="例如：数据结构课程" />
+            </label>
+            <button id="create-workspace-btn" class="primary-btn" type="button">创建</button>
+          </div>
+        </section>
+
+        <section class="sidebar-section collapsed" data-collapsible>
+          <button class="section-toggle" type="button" aria-expanded="false">
+            <span>已创建课程</span>
+            <span class="chevron">⌄</span>
+          </button>
+          <div class="section-body">
+            <div id="workspace-list" class="workspace-list"></div>
+          </div>
+        </section>
+
+        <nav class="nav" aria-label="页面视图">
+          <button class="nav-item active" data-view="agent" type="button">Agent 对话</button>
+          <button class="nav-item" data-view="sources" type="button">原始资料</button>
+          <button class="nav-item" data-view="wiki" type="button">Wiki导图</button>
+        </nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">课程知识库</p>
+            <h2 id="active-title">加载中...</h2>
+          </div>
+        </header>
+
+        <div id="message" class="message" hidden></div>
+
+        <section class="view" id="dashboard">
+          <div class="metric-grid">
+            <article class="metric">
+              <span>课程资料</span>
+              <strong id="metric-sources">0</strong>
+              <small>已导入的原始资料</small>
+            </article>
+            <article class="metric">
+              <span>知识页面</span>
+              <strong id="metric-pages">0</strong>
+              <small>已生成的 Markdown 页面</small>
+            </article>
+            <article class="metric">
+              <span>待处理问题</span>
+              <strong id="metric-issues">0</strong>
+              <small>需要人工确认</small>
+            </article>
+            <article class="metric">
+              <span>Agent 会话</span>
+              <strong id="metric-runs">0</strong>
+              <small>已记录的操作</small>
+            </article>
+          </div>
+
+          <div class="dashboard-grid">
+            <section class="panel">
+              <h3>待处理问题</h3>
+              <div id="issue-list" class="issue-list"></div>
+            </section>
+
+            <section class="panel">
+              <h3>使用逻辑</h3>
+              <p class="large-copy">先上传原始资料，再在 Agent 对话中学习、整理 Wiki，并按需生成复习资料。</p>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="sources">
+          <div class="raw-materials-layout">
+            <section class="panel upload-panel raw-upload-panel">
+              <h3>原始资料</h3>
+              <label class="dropzone">
+                <input
+                  id="file-input"
+                  type="file"
+                  multiple
+                  accept=".md,.markdown,.txt,.canvas,.base,.avif,.bmp,.gif,.jpeg,.jpg,.png,.svg,.webp,.pdf,.flac,.m4a,.mp3,.ogg,.wav,.webm,.3gp,.mkv,.mov,.mp4,.ogv"
+                />
+                <input
+                  id="folder-input"
+                  type="file"
+                  multiple
+                  webkitdirectory
+                  directory
+                />
+                <span>选择原始文件或文件夹</span>
+                <small>这里是事实来源层，由你添加和维护；系统会把文件复制到课程目录，保留原始文件夹结构，Claude Code 只按你的指令读取这些资料。</small>
+                <div class="source-picker-actions">
+                  <button class="tiny-btn" id="pick-files-btn" type="button">选择文件</button>
+                  <button class="tiny-btn" id="pick-folder-btn" type="button">选择文件夹</button>
+                </div>
+                <em id="selected-source-summary">尚未选择文件。</em>
+              </label>
+              <div class="format-section">
+                <h4>支持的文件类型</h4>
+                <div class="format-list" aria-label="支持的文件类型">
+                  <div>
+                    <strong>笔记</strong>
+                    <span>.md / .markdown / .txt</span>
+                  </div>
+                  <div>
+                    <strong>图片</strong>
+                    <span>.avif / .bmp / .gif / .jpg / .png / .svg / .webp</span>
+                  </div>
+                  <div>
+                    <strong>PDF</strong>
+                    <span>.pdf</span>
+                  </div>
+                  <div>
+                    <strong>音频</strong>
+                    <span>.flac / .m4a / .mp3 / .ogg / .wav / .webm / .3gp</span>
+                  </div>
+                  <div>
+                    <strong>视频</strong>
+                    <span>.mkv / .mov / .mp4 / .ogv / .webm</span>
+                  </div>
+                  <div>
+                    <strong>Canvas / Bases</strong>
+                    <span>.canvas / .base</span>
+                  </div>
+                </div>
+              </div>
+              <button id="upload-btn" class="primary-btn" type="button">复制到课程目录</button>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="wiki">
+          <div class="wiki-layout">
+            <section class="panel wiki-map-panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Wiki 思维导图</h3>
+                  <p class="panel-subtitle">拖拽画布移动视角，滚轮缩放，查看 Wiki 文件与原始资料章节的结构关系。</p>
+                </div>
+                <div class="mindmap-controls" aria-label="思维导图控制">
+                  <button id="mindmap-zoom-out" class="tiny-btn" type="button">缩小</button>
+                  <button id="mindmap-reset" class="tiny-btn" type="button">重置</button>
+                  <button id="mindmap-zoom-in" class="tiny-btn" type="button">放大</button>
+                </div>
+              </div>
+              <div id="wiki-mindmap" class="wiki-mindmap"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view active" id="agent">
+          <section class="panel cli-console-panel agent-chat-panel">
+            <div class="cli-console-head">
+              <div>
+                <h3>Agent 对话</h3>
+                <p class="panel-subtitle">像聊天一样学习和整理课程内容；底层由 Claude Code 读取课程目录、调用 Skills 并写入 Wiki 或复习资料。</p>
+              </div>
+              <span class="status-chip" id="cli-status">未启动</span>
+            </div>
+            <div class="cli-toolbar">
+              <button id="cli-start-btn" class="primary-btn" type="button">启动 Agent</button>
+              <button id="cli-reset-btn" class="tiny-btn" type="button">重置会话</button>
+            </div>
+            <div class="cli-meta-grid">
+              <div>
+                <span>Session</span>
+                <strong id="cli-session-id">尚未启动</strong>
+              </div>
+              <div>
+                <span>Workspace</span>
+                <strong id="cli-workspace-path">请选择课程</strong>
+              </div>
+            </div>
+            <div id="cli-terminal" class="cli-terminal agent-chat-thread" aria-live="polite"></div>
+            <div class="cli-compose">
+              <textarea id="cli-input" rows="1" placeholder="和 Agent 对话，例如：帮我整理今天学到的内容，或生成复习资料"></textarea>
+              <button id="cli-send-btn" class="primary-btn" type="button">发送</button>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
