@@ -2,6 +2,19 @@
 
 LLM Wiki Studio 是一个本地课程学习工作台。网页负责课程管理、原始资料上传、Wiki 导图浏览和 Agent 对话；真正的学习整理、Wiki 写入和复习资料生成交给本地 Claude Code CLI + Skills。
 
+## 灵感来源
+
+这个项目的灵感来自 Andrej Karpathy 的 [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 想法。Karpathy 在这篇 idea file 里提出：不要让 LLM 每次都从原始文档里临时检索和重新拼接答案，而是让 LLM 持续维护一个持久化、可链接、可演化的 Markdown Wiki。
+
+LLM Wiki Studio 沿用了其中几个核心判断：
+
+- `原始资料/` 是事实来源，应该由用户维护，Agent 只读取不改写。
+- `已创建的Wiki/` 是由 Agent 维护的 Markdown 记忆层，用来沉淀对话学习后的理解、例子、疑问和易错点。
+- `CLAUDE.md` / `AGENTS.md` / Skills 是约束 Agent 行为的 schema，让它不是普通聊天机器人，而是有目录职责和写入规则的学习搭档。
+- Obsidian 适合作为人类浏览 Wiki 的 IDE，而 Claude Code CLI 负责执行整理、写入和维护。
+
+本项目在这个模式上做了一个课程学习方向的具体化：Wiki 负责长期学习记忆；复习资料则优先由用户上传的重点标注文件和原始资料生成，Wiki 只作为可选补充。
+
 ## 核心流程
 
 ```text
