@@ -1,5 +1,7 @@
 # LLM Wiki Studio
 
+![LLM Wiki Studio 界面截图](docs/screenshot.png)
+
 LLM Wiki Studio 是一个本地课程学习工作台。网页负责课程管理、原始资料上传、Wiki 导图浏览和 Agent 对话；真正的学习整理、Wiki 写入和复习资料生成交给本地 Claude Code CLI + Skills。
 
 ## 灵感来源
