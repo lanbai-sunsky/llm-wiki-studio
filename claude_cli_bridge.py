@@ -154,6 +154,7 @@ def _build_command(
             "Wiki 只能作为可选补充，绝不能因为 Wiki 为空而拒绝生成。"
             "该 skill 只能在一个本次输出文件夹中写 `复习资料.md` 和 `评测报告.md` 两个文件，复习资料行格式必须是 `知识点名称~必考/有可能考`。"
             "不要把 Wiki 当作需要打分验收的最终产物；它是对话学习记忆层。"
+            "当 `sources.json` 中存在 `chunkStrategy: chapter` 的长文档时，必须逐章处理：先读 sources.json 查看进度，再用 Read 工具的 offset/limit 参数只读取单章行范围，处理完用 `wiki_engine.py chapter-done` 标记。禁止一次性读取全文。"
         ),
     ])
     for directory in add_dirs:

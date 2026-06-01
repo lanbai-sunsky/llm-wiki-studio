@@ -331,7 +331,7 @@ def initialize_workspace_skeleton(
         (root / WIKI_DIR / folder).mkdir(parents=True, exist_ok=True)
 
     if not (root / "AGENTS.md").exists() or reset_wiki:
-        (root / "AGENTS.md").write_text(_agents_md(course_name), encoding="utf-8")
+        (root / "AGENTS.md").write_text(_agents_md(course_name, workspace_root=str(root)), encoding="utf-8")
     write_scaffold_indexes(root)
     raw_files = write_raw_file_manifest(root)
     write_scaffold_index(root, course_name, raw_files)
@@ -630,11 +630,24 @@ def upload_source(workspace_id: str, filename: str, content: bytes) -> dict:
         "chunkCount": 0,
         "createdAt": now_iso(),
         "chunks": [],
+        "chunkStrategy": "section",
     }
+    if source_kind == "note" and len(content) > 50000:
+        parsed_text = parse_source_text(original_name, content)
+        if parsed_text and parsed_text != attachment_note(original_name, suffix):
+            chapters = chunk_text(parsed_text, source_id=source_id, file_name=original_name,
+                                  stored_path=str(upload_path.relative_to(root)).replace("\\", "/"),
+                                  max_chars=60000, strategy="chapter")
+            if len(chapters) > 1:
+                record["chunks"] = chapters
+                record["chunkCount"] = len(chapters)
+                record["chunkStrategy"] = "chapter"
+                append_log(root, f"已上传长文档 `{original_name}`，按章节分块：{len(chapters)} 个章节已记录行范围，正文留空待增量处理。")
     sources.append(record)
     write_json(root / METADATA_DIR / "sources.json", sources)
     update_raw_index(root, sources)
-    append_log(root, f"已上传原始资料 `{original_name}`。")
+    if record.get("chunkStrategy") != "chapter":
+        append_log(root, f"已上传原始资料 `{original_name}`。")
     return record
 
 
@@ -722,26 +735,35 @@ def attachment_note(filename: str, suffix: str) -> str:
     )
 
 
-def chunk_text(text: str, *, source_id: str, file_name: str, stored_path: str = "", max_chars: int = 1600) -> list[dict]:
+def chunk_text(text: str, *, source_id: str, file_name: str, stored_path: str = "", max_chars: int = 1600, strategy: str = "section") -> list[dict]:
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     sections = markdown_sections(normalized)
     if not sections:
         sections = [{"heading": Path(file_name).stem or "原始文件", "level": 1, "text": normalized.strip(), "lineStart": 1, "lineEnd": len(normalized.splitlines())}]
     chunks: list[dict] = []
+
+    if strategy == "chapter" and len(sections) > 1:
+        chapter_groups = group_by_chapter(sections, max_chars=max_chars)
+        for group in chapter_groups:
+            chunks.append(
+                make_chunk(
+                    source_id, file_name, len(chunks), "",
+                    section=group["heading"], heading=group["heading"],
+                    level=group["level"], line_start=group["lineStart"],
+                    line_end=group["lineEnd"], stored_path=stored_path,
+                    status="pending",
+                )
+            )
+        return chunks
+
     for section in sections:
         for part in split_section_text(section["text"], max_chars=max_chars):
             chunks.append(
                 make_chunk(
-                    source_id,
-                    file_name,
-                    len(chunks),
-                    part,
-                    section=section["heading"],
-                    heading=section["heading"],
-                    level=section["level"],
-                    line_start=section["lineStart"],
-                    line_end=section["lineEnd"],
-                    stored_path=stored_path,
+                    source_id, file_name, len(chunks), part,
+                    section=section["heading"], heading=section["heading"],
+                    level=section["level"], line_start=section["lineStart"],
+                    line_end=section["lineEnd"], stored_path=stored_path,
                 )
             )
     return chunks
@@ -787,6 +809,95 @@ def markdown_sections(text: str) -> list[dict]:
     return sections
 
 
+def find_chapter_level(sections: list[dict]) -> int:
+    level_counts: dict[int, int] = {}
+    for section in sections:
+        level = section.get("level", 1)
+        level_counts[level] = level_counts.get(level, 0) + 1
+    for level in sorted(level_counts):
+        if level_counts[level] > 1:
+            return level
+    if level_counts:
+        return min(level_counts)
+    return 1
+
+
+def group_by_chapter(sections: list[dict], *, max_chars: int = 30000) -> list[dict]:
+    chapter_level = find_chapter_level(sections)
+    chapters: list[dict] = []
+    preamble: list[dict] = []
+    current_sections: list[dict] = []
+    current_opened = False
+
+    for section in sections:
+        is_chapter = section.get("level") == chapter_level
+
+        if is_chapter:
+            if current_opened and current_sections:
+                chapters.append(
+                    _build_chapter_group(current_sections,
+                                         chapter_level, current_sections[0].get("lineStart", 1),
+                                         current_sections[-1].get("lineEnd", 1)))
+                current_sections = []
+            current_opened = True
+
+        if current_opened:
+            current_sections.append(section)
+        elif not is_chapter:
+            preamble.append(section)
+
+    if current_sections:
+        chapters.append(
+            _build_chapter_group(current_sections,
+                                 chapter_level, current_sections[0].get("lineStart", 1),
+                                 current_sections[-1].get("lineEnd", 1)))
+
+    if preamble and chapters:
+        preamble_text = "\n\n".join(
+            ("#" * min(section.get("level", 1), 6)) + " " + section.get("heading", "") + "\n" + section.get("text", "")
+            for section in preamble
+        ).strip()
+        if preamble_text:
+            chapters[0]["text"] = preamble_text + "\n\n" + chapters[0]["text"]
+            chapters[0]["lineStart"] = preamble[0].get("lineStart", chapters[0]["lineStart"])
+
+    if not chapters:
+        return [{"heading": sections[0].get("heading", "原始文件") if sections else "原始文件",
+                  "level": 1, "text": "\n\n".join(s["text"] for s in sections),
+                  "lineStart": 1, "lineEnd": sections[-1].get("lineEnd", 1) if sections else 1}]
+
+    result: list[dict] = []
+    for chapter in chapters:
+        chapter_text = chapter["text"]
+        if len(chapter_text) <= max_chars:
+            result.append(chapter)
+        else:
+            sub_parts = split_section_text(chapter_text, max_chars=max_chars)
+            for part_index, part_text in enumerate(sub_parts):
+                result.append({
+                    "heading": chapter["heading"] if part_index == 0 else f"{chapter['heading']}（续 {part_index + 1}）",
+                    "level": chapter["level"],
+                    "text": part_text,
+                    "lineStart": chapter["lineStart"],
+                    "lineEnd": chapter["lineEnd"],
+                })
+    return result
+
+
+def _build_chapter_group(sections: list[dict], level: int, line_start: int, line_end: int) -> dict:
+    title = sections[0].get("heading", "未命名章节") if sections else "未命名章节"
+    return {
+        "heading": title,
+        "level": level,
+        "text": "\n\n".join(
+            ("#" * min(section.get("level", 1), 6)) + " " + section.get("heading", "") + "\n" + section.get("text", "")
+            for section in sections
+        ).strip(),
+        "lineStart": line_start,
+        "lineEnd": line_end,
+    }
+
+
 def split_section_text(text: str, *, max_chars: int) -> list[str]:
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
     if not paragraphs and text.strip():
@@ -829,8 +940,9 @@ def make_chunk(
     line_start: int,
     line_end: int,
     stored_path: str,
+    status: str = "",
 ) -> dict:
-    return {
+    result = {
         "id": f"{source_id}_{index:03d}",
         "sourceId": source_id,
         "fileName": file_name,
@@ -844,6 +956,9 @@ def make_chunk(
         "text": text,
         "tokenEstimate": max(1, len(text) // 4),
     }
+    if status:
+        result["status"] = status
+    return result
 
 
 def render_parsed_markdown(file_name: str, chunks: list[dict], *, source_kind: str) -> str:
@@ -1009,6 +1124,9 @@ def prepare_sources_for_wiki(root: Path, sources: list[dict]) -> list[dict]:
     prepared = []
     for source in sources:
         source = dict(source)
+        if source.get("chunkStrategy") == "chapter":
+            prepared.append(source)
+            continue
         stored_path = root / source["storedPath"]
         content = stored_path.read_bytes() if stored_path.exists() else b""
         parsed_text = parse_source_text(source["fileName"], content)
@@ -2887,6 +3005,58 @@ def build_graph(pages: list[dict], sources: list[dict] | None = None) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
+def get_chapter_progress(root: Path, source_id: str | None = None) -> dict:
+    sources = read_json(root / METADATA_DIR / "sources.json", [])
+    chapter_sources = [source for source in sources if source.get("chunkStrategy") == "chapter"]
+    if source_id:
+        chapter_sources = [source for source in chapter_sources if source.get("id") == source_id]
+    results = []
+    for source in chapter_sources:
+        chunks = source.get("chunks", [])
+        pending = [chunk for chunk in chunks if chunk.get("status") == "pending"]
+        done = [chunk for chunk in chunks if chunk.get("status") == "done"]
+        total = len(chunks)
+        results.append({
+            "sourceId": source.get("id"),
+            "fileName": source.get("fileName"),
+            "storedPath": source.get("storedPath"),
+            "totalChapters": total,
+            "doneCount": len(done),
+            "pendingCount": len(pending),
+            "nextPending": {
+                "index": pending[0]["index"], "section": pending[0]["section"],
+                "heading": pending[0].get("heading", pending[0]["section"]),
+                "level": pending[0].get("level", 1),
+                "lineStart": pending[0]["lineStart"], "lineEnd": pending[0]["lineEnd"],
+            } if pending else None,
+            "chapters": [{
+                "index": chunk.get("index"), "section": chunk.get("section"),
+                "lineStart": chunk.get("lineStart"), "lineEnd": chunk.get("lineEnd"),
+                "status": chunk.get("status", ""),
+            } for chunk in chunks],
+        })
+    return {"chapterSources": results, "allDone": all(source["pendingCount"] == 0 for source in results)}
+
+
+def mark_chapter_done(root: Path, source_id: str, chunk_index: int) -> dict:
+    sources = read_json(root / METADATA_DIR / "sources.json", [])
+    for source in sources:
+        if source.get("id") != source_id:
+            continue
+        chunks = source.get("chunks", [])
+        if chunk_index < 0 or chunk_index >= len(chunks):
+            raise ValueError(f"章节索引 {chunk_index} 超出范围 0-{len(chunks) - 1}")
+        if chunks[chunk_index].get("status") == "done":
+            return {"ok": True, "alreadyDone": True, "sourceId": source_id, "chunkIndex": chunk_index, "section": chunks[chunk_index].get("section")}
+        chunks[chunk_index]["status"] = "done"
+        source["chunks"] = chunks
+        source["chunkCount"] = len(chunks)
+        write_json(root / METADATA_DIR / "sources.json", sources)
+        append_log(root, f"已标记章节完成：{chunks[chunk_index].get('section', '未命名章节')}（{source.get('fileName')}）。")
+        return {"ok": True, "sourceId": source_id, "chunkIndex": chunk_index, "section": chunks[chunk_index].get("section")}
+    raise KeyError(f"Source not found: {source_id}")
+
+
 def append_log(root: Path, message: str) -> None:
     with (root / "log.md").open("a", encoding="utf-8") as handle:
         handle.write(f"\n## {now_iso()}\n\n- {message}\n")
@@ -2913,7 +3083,8 @@ def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _agents_md(name: str) -> str:
+def _agents_md(name: str, workspace_root: str = "") -> str:
+    ws_root = workspace_root or "."
     return f"""# {name} / Learning Console Rules
 
 你是 `{name}` 的 Claude Code 学习搭档。这个工作区的核心不是一次性生成或检验 Wiki，而是在每轮学习对话后，把用户真正学到的新内容整理成可长期回看的 Markdown 记忆。
@@ -2921,7 +3092,7 @@ def _agents_md(name: str) -> str:
 ## 核心闭环
 
 1. 和用户对话学习、解释、答疑。
-2. 对话结束或用户说“记下来/保存/我懂了/这很重要”时，使用 `learning-memory-save` skill。
+2. 对话结束或用户说"记下来/保存/我懂了/这很重要"时，使用 `learning-memory-save` skill。
 3. 将用户确认的新理解、例子、疑问、易错点保存到 `{WIKI_DIR}/`。
 4. 当用户需要考试重点或背诵材料时，使用 `review-materials` skill 基于用户上传的重点标注文件和 `{RAW_DIR}/` 生成到 `{REVIEW_DIR}/`；`{WIKI_DIR}/` 只作为可选补充。
 
@@ -2943,6 +3114,20 @@ def _agents_md(name: str) -> str:
 - 对未确认内容标为 `待确认`，不要伪装成事实。
 - 更新 `index.md`，并向 `log.md` 追加简短记录。
 
+## 长文档处理策略
+
+当 `{RAW_DIR}/` 中包含长文档时（`sources.json` 中 `chunkStrategy` 为 `chapter` 的文件），必须逐章处理，绝不能一次性读取整本书。
+
+1. 先读 `.llm-wiki/metadata/sources.json`，找到 `chunkStrategy: "chapter"` 的来源文件。
+2. 对这类来源文件，章节边界和进度已记录在 `chunks` 中（`status: pending/done`）。
+3. 用 Read 工具读取指定行范围（`lineStart` ~ `lineEnd`）获取单章正文，不要读取整个文件。
+4. 处理完一个章节后：
+   - 用 `learning-memory-save` skill 将本章学习内容写入 `{WIKI_DIR}/`。
+   - 调用 `py "{ROOT.as_posix()}/wiki_engine.py" chapter-done "{ws_root}" "<SOURCE_ID>" <CHUNK_INDEX>` 标记完成。
+5. 查询进度：`py "{ROOT.as_posix()}/wiki_engine.py" chapter-progress "{ws_root}"`。
+6. 循环直到所有章节都标记为 done。
+7. 生成复习资料时，`review-materials` skill 不受影响（它基于 sources.json 元数据 + 重点标注文件，不依赖全量正文）。
+
 ## 复习资料
 
 优先使用 `.claude/skills/review-materials/SKILL.md`。复习资料应该优先基于 `{REVIEW_DIR}/重点文档/` 中的用户重点标注文件，并对照 `{RAW_DIR}/` 生成；`{WIKI_DIR}/` 只作为可选补充。不要因为 Wiki 为空或只有骨架而拒绝生成。
@@ -2952,7 +3137,8 @@ def _agents_md(name: str) -> str:
 - 不要围绕 Wiki 质量检查、语义评分、达标验收展开工作。
 - 不要依赖旧 LangGraph Agent 工作流。
 - 不要重写或删除用户原始资料。
-- 不要为了“看起来完整”编造来源、结论或文件名。
+- 不要为了"看起来完整"编造来源、结论或文件名。
+- 遇到 `chunkStrategy: "chapter"` 的长文档时，禁止一次性读取全文，必须逐章处理。
 """
 
 
@@ -2971,6 +3157,35 @@ def _index_md(name: str) -> str:
 
 - 暂无复习资料。
 """
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 3:
+        print("usage: wiki_engine.py <command> <workspace_root> [args...]")
+        print("  chapter-progress <workspace_root> [source_id]")
+        print("  chapter-done <workspace_root> <source_id> <chunk_index>")
+        sys.exit(1)
+
+    command = sys.argv[1]
+    root = Path(sys.argv[2])
+
+    if command == "chapter-progress":
+        source_id = sys.argv[3] if len(sys.argv) > 3 else None
+        result = get_chapter_progress(root, source_id)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif command == "chapter-done":
+        if len(sys.argv) < 5:
+            print("usage: wiki_engine.py chapter-done <workspace_root> <source_id> <chunk_index>")
+            sys.exit(1)
+        source_id = sys.argv[3]
+        chunk_index = int(sys.argv[4])
+        result = mark_chapter_done(root, source_id, chunk_index)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"unknown command: {command}")
+        sys.exit(1)
 
 
 
